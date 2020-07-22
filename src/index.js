@@ -6,6 +6,9 @@ require('dotenv').config()
 const imagesEnabled = true
 const login = process.env.LOGIN;
 const password = process.env.PASSWORD;
+const target = process.env.TARGET;
+const name = process.env.NAME;
+const spam = process.env.SPAM;
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -26,8 +29,8 @@ const password = process.env.PASSWORD;
   })
 
   // login
-  const fileExists = await fs.stat('./cookies.json').catch(e => false)
-  const cookiesString = fileExists ? await fs.readFile('./cookies.json') : null
+  const fileExists = await fs.stat('./tmp/cookies.json').catch(e => false)
+  const cookiesString = fileExists ? await fs.readFile('./tmp/cookies.json') : null
 
   if (cookiesString) {
     const cookies = JSON.parse(cookiesString)
@@ -40,15 +43,15 @@ const password = process.env.PASSWORD;
     await page.waitForSelector('.user_panel__company-name--dropdown-label', { timeout: 5000 })
 
     const cookies = await page.cookies()
-    await fs.writeFile('./cookies.json', JSON.stringify(cookies, null, 2))
+    await fs.writeFile('./tmp/cookies.json', JSON.stringify(cookies, null, 2))
   }
 
   // collect links
-  const linksExists = await fs.stat('./links.json').catch(e => false)
-  let links = linksExists ? JSON.parse(await fs.readFile('./links.json')) : []
+  const linksExists = await fs.stat(`./tmp/${name}.json`).catch(e => false)
+  let links = linksExists ? JSON.parse(await fs.readFile(`./tmp/${name}.json`)) : []
 
   if (links.length === 0) {
-    await page.goto('https://career.habr.com/resumes?skills%5B%5D=1080&currency=rur&remote=1&visit_last_year=1', { waitUntil: 'networkidle2' })
+    await page.goto(target, { waitUntil: 'networkidle2' })
 
     while (true) {
       await page.waitForSelector('.search_item', { timeout: 5000 })
@@ -73,31 +76,34 @@ const password = process.env.PASSWORD;
       }
     }
 
-    await fs.writeFile('./links.json', JSON.stringify(links, null, 2))
+    await fs.writeFile(`./tmp/${name}.json`, JSON.stringify(links, null, 2))
   }
 
-  for (const link of links) {
-    console.log(link)
 
-    const pieces = link.split('/')
-    const name = pieces.pop()
-    const url = `https://career.habr.com/conversations/${name}`
+  if (spam === '1') {
+    for (const link of links) {
+      console.log(link)
 
-    await page.goto(url, { waitUntil: 'networkidle2' })
+      const pieces = link.split('/')
+      const name = pieces.pop()
+      const url = `https://career.habr.com/conversations/${name}`
 
-    try {
-      await page.waitForSelector('.templates_popup_toggle_wrapper', { timeout: 5000 })
+      await page.goto(url, { waitUntil: 'networkidle2' })
 
-      if (await page.$('.messages .empty') !== null) {
-        await page.click('.templates_popup_toggle_wrapper .toggler')
-        await page.click('.templates_popup_wrapper li')
-        await page.click('.new_message button')
+      try {
+        await page.waitForSelector('.templates_popup_toggle_wrapper', { timeout: 5000 })
+
+        if (await page.$('.messages .empty') !== null) {
+          await page.click('.templates_popup_toggle_wrapper .toggler')
+          await page.click('.templates_popup_wrapper li')
+          await page.click('.new_message button')
+        }
+      } catch (e) {
+        console.log(e)
       }
-    } catch (e) {
-      console.log(e)
-    }
 
-    await page.waitFor(1000 + Math.random() * 1000)
+      await page.waitFor(1000 + Math.random() * 1000)
+    }
   }
 
   await browser.close()
