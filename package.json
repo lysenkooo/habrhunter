@@ -1,0 +1,12 @@
+{
+  "name": "careet_bot",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "puppeteer": "^2.1.1"
+  }
+}
