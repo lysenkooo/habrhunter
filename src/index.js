@@ -3,12 +3,29 @@ const fs = require('fs').promises
 const path = require('path').promises
 require('dotenv').config()
 
-const imagesEnabled = true
-const login = process.env.LOGIN;
-const password = process.env.PASSWORD;
-const target = process.env.TARGET;
-const name = process.env.NAME;
-const spam = process.env.SPAM;
+
+const WAIT_TIMEOUT = 5000
+const IMAGES_ENABLED = true
+const ACTION_COLLECT = 'colect'
+const ACTION_SPAM = 'spam'
+const AVAILABLE_ACTIONS = [ACTION_COLLECT, ACTION_SPAM]
+
+const USER_LOGIN = process.env.LOGIN
+const USER_PASSWORD = process.env.PASSWORD
+const VACANCY_LIST_URL = process.env.VACANCY_LIST_URL
+const FILENAME = process.env.FILENAME
+const FORCE_COLLECT = process.env.FORCE
+const ACTION = process.env.ACTION
+
+if (!AVAILABLE_ACTIONS.includes(ACTION)) {
+  console.error('Unknown action', ACTION)
+  process.exit(1)
+}
+
+if (!FILENAME) {
+  console.error('Unknown filename')
+  process.exit(1)
+}
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -22,10 +39,11 @@ const spam = process.env.SPAM;
   await page.setRequestInterception(true)
 
   page.on('request', request => {
-    if (!imagesEnabled && request.resourceType() === 'image')
+    if (!IMAGES_ENABLED && request.resourceType() === 'image') {
       request.abort()
-    else
+    } else {
       request.continue()
+    }
   })
 
   // login
@@ -37,74 +55,107 @@ const spam = process.env.SPAM;
     await page.setCookie(...cookies)
   } else {
     await page.goto('https://career.habr.com/users/sign_in', { waitUntil: 'networkidle2' })
-    await page.type('input[name="user[email]"]', login)
-    await page.type('input[name="user[password]"]', password)
+    await page.type('input[name="user[email]"]', USER_LOGIN)
+    await page.type('input[name="user[password]"]', USER_PASSWORD)
     await page.click('.auth-layout__content form .buttons_wide .button')
-    await page.waitForSelector('.user_panel__company-name--dropdown-label', { timeout: 5000 })
+    await page.waitForSelector('.user_panel__company-name--dropdown-label', { timeout: WAIT_TIMEOUT })
 
     const cookies = await page.cookies()
     await fs.writeFile('./tmp/cookies.json', JSON.stringify(cookies, null, 2))
   }
 
+  console.log('Using file', FILENAME)
+
   // collect links
-  const linksExists = await fs.stat(`./tmp/${name}.json`).catch(e => false)
-  let links = linksExists ? JSON.parse(await fs.readFile(`./tmp/${name}.json`)) : []
+  const linksExists = await fs.stat(`./tmp/${FILENAME}.json`).catch(e => false)
+  let links = linksExists ? JSON.parse(await fs.readFile(`./tmp/${FILENAME}.json`)) : []
 
-  if (links.length === 0) {
-    await page.goto(target, { waitUntil: 'networkidle2' })
-
-    while (true) {
-      await page.waitForSelector('.search_item', { timeout: 5000 })
-
-      const anchors = await page.$$('.search_item .username a')
-
-      const propertyJsHandles = await Promise.all(
-        anchors.map(handle => handle.getProperty('href'))
-      )
-
-      const hrefs = await Promise.all(
-        propertyJsHandles.map(handle => handle.jsonValue())
-      )
-
-      links = links.concat(hrefs)
-      await page.waitFor(1000 + Math.random() * 1000)
-
-      try {
-        await page.click('a[rel="next"]')
-      } catch (e) {
-        break
-      }
+  if (ACTION === ACTION_COLLECT) {
+    if (!VACANCY_LIST_URL) {
+      console.error('Unknown vacancy list url')
+      process.exit(1)
     }
 
-    await fs.writeFile(`./tmp/${name}.json`, JSON.stringify(links, null, 2))
-  }
+    if (FORCE_COLLECT) {
+      links = []
+    }
 
+    if (links.length > 0) {
+      console.log('Already done, please use force mode...')
+    } else {
+      await page.goto(VACANCY_LIST_URL, { waitUntil: 'networkidle2' })
 
-  if (spam === '1') {
-    for (const link of links) {
-      console.log(link)
+      while (true) {
+        console.log('Wait the page...')
+        await page.waitForSelector('.search-results .separated-list__item', { timeout: WAIT_TIMEOUT })
+        const anchors = await page.$$('.search-results .resume-card__title a')
 
+        const propertyJsHandles = await Promise.all(
+          anchors.map(handle => handle.getProperty('href'))
+        )
+
+        const hrefs = await Promise.all(
+          propertyJsHandles.map(handle => handle.jsonValue())
+        )
+
+        links = links.concat(hrefs)
+        await fs.writeFile(`./tmp/${FILENAME}.json`, JSON.stringify(links, null, 2))
+        await page.waitFor(1000 + Math.random() * 1000)
+
+        try {
+          console.log('Click next...')
+          await page.click('.with-pagination__side-button button[rel="next"]')
+        } catch (e) {
+          console.log('Error during click next...')
+          break
+        }
+
+        console.log('Finished!')
+      }
+    }
+  } else if (ACTION === ACTION_SPAM) {
+    while (links.length > 0) {
+      await page.waitFor(1000 + Math.random() * 1000)
+
+      const link = links.shift()
       const pieces = link.split('/')
       const name = pieces.pop()
       const url = `https://career.habr.com/conversations/${name}`
+      const response = await page.goto(url, { waitUntil: 'networkidle2' })
+      const status = response.status()
+      const chain = response.request().redirectChain()
 
-      await page.goto(url, { waitUntil: 'networkidle2' })
+      if (chain.length > 0) {
+        console.log('Redirect found, gonna skip:', name)
+        links.push(link)
+      } else if (status === 404) {
+        console.log('User not found, remove it:', name)
+      } else {
+        try {
+          await page.waitForSelector('.chat-footer__write-footer', { timeout: WAIT_TIMEOUT })
 
-      try {
-        await page.waitForSelector('.templates_popup_toggle_wrapper', { timeout: 5000 })
+          const emptyHistoryPlaceholder = await page.$('chat__body chat--placeholder')
+          const [vacancyBody] = await page.$x("//div[@class='chat__messages-container']/div[contains(., '1000061701')]")
 
-        if (await page.$('.messages .empty') !== null) {
-          await page.click('.templates_popup_toggle_wrapper .toggler')
-          await page.click('.templates_popup_wrapper li')
-          await page.click('.new_message button')
+          if (emptyHistoryPlaceholder || !vacancyBody) {
+            await page.click('.chat-footer__rounded-button--template')
+            const [templateButton] = await page.$x("//div[@class='template-modal__list']/div[contains(., '1000061701')]")
+            await templateButton.click()
+            await page.click('.chat-footer__rounded-button--send')
+            console.log('Sent to:', name)
+          } else {
+            console.log('Person was already messaged:', name)
+          }
+        } catch (e) {
+          console.log(e)
         }
-      } catch (e) {
-        console.log(e)
       }
 
-      await page.waitFor(1000 + Math.random() * 1000)
+      await fs.writeFile(`./tmp/${FILENAME}.json`, JSON.stringify(links, null, 2))
     }
   }
 
   await browser.close()
+
+  console.log('Bye!')
 })()

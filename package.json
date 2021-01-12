@@ -3,7 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "start": "node src/index.js"
+    "collect": "ACTION=collect node src/index.js",
+    "spam": "ACTION=spam node src/index.js"
   },
   "dependencies": {
     "dotenv": "^8.2.0",
