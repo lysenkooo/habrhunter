@@ -121,6 +121,8 @@ if (!FILENAME) {
       const pieces = link.split('/')
       const name = pieces.pop()
       const url = `https://career.habr.com/conversations/${name}`
+      console.log('Load', url)
+
       const response = await page.goto(url, { waitUntil: 'networkidle2' })
       const status = response.status()
       const chain = response.request().redirectChain()
