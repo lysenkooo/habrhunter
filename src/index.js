@@ -6,16 +6,16 @@ require('dotenv').config()
 
 const WAIT_TIMEOUT = 5000
 const IMAGES_ENABLED = true
-const ACTION_COLLECT = 'colect'
+const ACTION_COLLECT = 'collect'
 const ACTION_SPAM = 'spam'
 const AVAILABLE_ACTIONS = [ACTION_COLLECT, ACTION_SPAM]
 
 const USER_LOGIN = process.env.LOGIN
 const USER_PASSWORD = process.env.PASSWORD
-const VACANCY_LIST_URL = process.env.VACANCY_LIST_URL
-const FILENAME = process.env.FILENAME
-const FORCE_COLLECT = process.env.FORCE
 const ACTION = process.env.ACTION
+const FORCE = process.env.FORCE
+const FILENAME = process.env.FILENAME
+const RESUME_LIST = process.env.RESUME_LIST
 
 if (!AVAILABLE_ACTIONS.includes(ACTION)) {
   console.error('Unknown action', ACTION)
@@ -27,75 +27,89 @@ if (!FILENAME) {
   process.exit(1)
 }
 
-(async () => {
-  try {
-    const browser = await puppeteer.launch({
-      headless: false,
-      slowMo: 5,
-      // devtools: true
-    })
+console.log('Using file', FILENAME)
 
-    process.on('SIGINT', async () => {
-      console.log('Caught interrupt signal')
-      await browser.close()
-      process.exit()
-    })
+async function initPage(browser) {
+  const page = await browser.newPage()
+  await page.setViewport({ width: 1920, height: 1080 })
+  await page.setRequestInterception(true)
 
-    const page = await browser.newPage()
-    await page.setViewport({ width: 1920, height: 1080 })
-    await page.setRequestInterception(true)
-
-    page.on('request', request => {
-      if (!IMAGES_ENABLED && request.resourceType() === 'image') {
-        request.abort()
-      } else {
-        request.continue()
-      }
-    })
-
-    // login
-    const fileExists = await fs.stat('./tmp/cookies.json').catch(e => false)
-    const cookiesString = fileExists ? await fs.readFile('./tmp/cookies.json') : null
-
-    if (cookiesString) {
-      const cookies = JSON.parse(cookiesString)
-      await page.setCookie(...cookies)
+  page.on('request', request => {
+    if (!IMAGES_ENABLED && request.resourceType() === 'image') {
+      request.abort()
     } else {
-      await page.goto('https://career.habr.com/users/sign_in', { waitUntil: 'networkidle2' })
-      await page.type('input[name="user[email]"]', USER_LOGIN)
-      await page.type('input[name="user[password]"]', USER_PASSWORD)
-      await page.click('.auth-layout__content form .buttons_wide .button')
-      await page.waitForSelector('.user_panel__company-name--dropdown-label', { timeout: WAIT_TIMEOUT })
-
-      const cookies = await page.cookies()
-      await fs.writeFile('./tmp/cookies.json', JSON.stringify(cookies, null, 2))
+      request.continue()
     }
+  })
 
-    console.log('Using file', FILENAME)
+  await login(page)
 
-    // collect links
-    const linksExists = await fs.stat(`./tmp/${FILENAME}.json`).catch(e => false)
-    let links = linksExists ? JSON.parse(await fs.readFile(`./tmp/${FILENAME}.json`)) : []
+  return page
+}
+
+async function login(page) {
+  const fileExists = await fs.stat('./tmp/cookies.json').catch(e => false)
+  const cookiesString = fileExists ? await fs.readFile('./tmp/cookies.json') : null
+
+  if (cookiesString) {
+    const cookies = JSON.parse(cookiesString)
+    await page.setCookie(...cookies)
+  } else {
+    await page.goto('https://career.habr.com/users/sign_in', { waitUntil: 'networkidle2' })
+    await page.type('input[name="user[email]"]', USER_LOGIN)
+    await page.type('input[name="user[password]"]', USER_PASSWORD)
+    await page.click('.auth-layout__content form .buttons_wide .button')
+    await page.waitForSelector('.user_panel__item.user_panel__mail', { timeout: WAIT_TIMEOUT })
+
+    const cookies = await page.cookies()
+    await fs.writeFile('./tmp/cookies.json', JSON.stringify(cookies, null, 2))
+  }
+}
+
+async function loadLinks() {
+  const linksExists = await fs.stat(`./tmp/${FILENAME}.json`).catch(e => false)
+
+  return linksExists ? JSON.parse(await fs.readFile(`./tmp/${FILENAME}.json`)) : []
+}
+
+async function saveLinks(links) {
+  return await fs.writeFile(`./tmp/${FILENAME}.json`, JSON.stringify(links, null, 2))
+}
+
+(async () => {
+  const browser = await puppeteer.launch({
+    headless: false,
+    slowMo: 5,
+    // devtools: true
+  })
+
+  process.on('SIGINT', async () => {
+    console.log('Caught interrupt signal')
+    await browser.close()
+    process.exit()
+  })
+
+  try {
+    const page = await initPage(browser)
 
     if (ACTION === ACTION_COLLECT) {
-      if (!VACANCY_LIST_URL) {
-        console.error('Unknown vacancy list url')
+      if (!RESUME_LIST) {
+        console.error('Bad resume list url')
         process.exit(1)
       }
 
-      if (FORCE_COLLECT) {
-        links = []
-      }
+      let links = FORCE ? [] : await loadLinks()
 
       if (links.length > 0) {
-        console.log('Already done, please use force mode...')
+        console.log('Links exist, please use force mode...')
       } else {
-        await page.goto(VACANCY_LIST_URL, { waitUntil: 'networkidle2' })
+        await page.goto(RESUME_LIST, { waitUntil: 'networkidle2' })
 
         while (true) {
-          console.log('Wait the page...')
-          await page.waitForSelector('.search-results .separated-list__item', { timeout: WAIT_TIMEOUT })
-          const anchors = await page.$$('.search-results .resume-card__title a')
+          console.log('Loading...')
+          const resumeLinkSelector = '.with-pagination .section-group .basic-section .resume-card .resume-card__title .resume-card__title-link'
+          await page.waitForSelector(resumeLinkSelector, { timeout: WAIT_TIMEOUT })
+          const anchors = await page.$$(resumeLinkSelector)
 
           const propertyJsHandles = await Promise.all(
             anchors.map(handle => handle.getProperty('href'))
@@ -105,22 +119,27 @@ if (!FILENAME) {
             propertyJsHandles.map(handle => handle.jsonValue())
           )
 
+          console.log(hrefs)
+
           links = links.concat(hrefs)
-          await fs.writeFile(`./tmp/${FILENAME}.json`, JSON.stringify(links, null, 2))
-          await page.waitFor(1000 + Math.random() * 1000)
+          await saveLinks(links)
 
           try {
             console.log('Click next...')
-            await page.click('.with-pagination__side-button button[rel="next"]')
+            await page.click('.with-pagination__controls a[rel="next"]')
+            await page.waitFor(1000 + Math.random() * 1000)
+            await page.waitForSelector('.with-pagination .basic-section .resume-card-skeleton', { timeout: WAIT_TIMEOUT, hidden: true })
           } catch (e) {
             console.log('Error during click next...')
             break
           }
-
-          console.log('Finished!')
         }
+
+        console.log('Finished!')
       }
     } else if (ACTION === ACTION_SPAM) {
+      const links = await loadLinks()
+
       while (links.length > 0) {
         await page.waitFor(1000 + Math.random() * 1000)
 
@@ -173,10 +192,10 @@ if (!FILENAME) {
       }
     }
 
-    await browser.close()
     console.log('Bye!')
   } catch (e) {
+    console.log('Error', e)
+  } finally {
     await browser.close()
-    console.log('Closed unexpectably')
   }
 })()
