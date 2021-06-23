@@ -9,6 +9,7 @@ const IMAGES_ENABLED = true
 const ACTION_COLLECT = 'collect'
 const ACTION_SPAM = 'spam'
 const AVAILABLE_ACTIONS = [ACTION_COLLECT, ACTION_SPAM]
+const VACANCY_ID = '1000078699'
 
 const USER_LOGIN = process.env.LOGIN
 const USER_PASSWORD = process.env.PASSWORD
@@ -172,11 +173,11 @@ async function saveLinks(links) {
             await page.waitForSelector('.chat-footer__write-footer', { timeout: WAIT_TIMEOUT })
 
             const emptyHistoryPlaceholder = await page.$('chat__body chat--placeholder')
-            const [vacancyBody] = await page.$x("//div[@class='chat__messages-container']/div[contains(., '1000061701')]")
+            const [vacancyBody] = await page.$x(`//div[@class='chat__messages-container']/div[contains(., '${VACANCY_ID}')]`)
 
             if (emptyHistoryPlaceholder || !vacancyBody) {
               await page.click('.chat-footer__rounded-button--template')
-              const [templateButton] = await page.$x("//div[@class='template-modal__list']/div[contains(., '1000061701')]")
+              const [templateButton] = await page.$x(`//div[@class='template-modal__list']/div[contains(., '${VACANCY_ID}')]`)
               await templateButton.click()
               await page.click('.chat-footer__rounded-button--send')
               console.log('Sent to:', name)
